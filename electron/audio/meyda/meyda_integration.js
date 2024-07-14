@@ -8,11 +8,12 @@ let THRESHED = [];
 let MAX_IS_OVER_STD = false;
 let PULSE = 0.0;
 let PULSE_DECAY = 0.5;
-let STD_FACTOR = 2.0;
-let STD_OFFSET = 2.0;
-let NOISE_GATE_THRESHOLD = -40;
+let NOISE_GATE_THRESHOLD = -1;
 let FILTER_FLUX = 5;
-let MEYDA_BUFFER_SIZE = 512;
+let STD_FACTOR = 0.5;
+let STD_OFFSET = 3.0;
+let MEYDA_BUFFER_SIZE = 1024;
+let MAX_MEMORY_GRAPH_SIZE = 20;
 
 class PulseGenerator {
   constructor() {
@@ -150,18 +151,16 @@ class PulseGenerator {
   }
 
   pulseFromExternal() {
-    console.log("pulseFromExternal")
+    console.log("pulseFromExternal");
     if (this.autotempo) {
       this.autotempoFinder();
     }
     if (this.waitForSync) {
-    this.waitForSync = false;
+      this.waitForSync = false;
     }
   }
 
-  autotempoFinder() {
-
-  }
+  autotempoFinder() {}
 
   pulseGenerator() {
     if (this.waitForSync) {
@@ -360,6 +359,32 @@ function addPlottingSection() {
   metricsWrapper.appendChild(stdFactorWrapper);
   metricsWrapper.appendChild(stdOffsetWrapper);
 
+  const ymaxWrapper = document.createElement("div");
+  ymaxWrapper.id = "ymaxWrapper";
+  ymaxWrapper.style.display = "flex";
+  ymaxWrapper.style.flexDirection = "row";
+
+  const ymaxLabel = document.createElement("label");
+  ymaxLabel.id = "ymaxLabel";
+  ymaxLabel.innerText = "ymax";
+  ymaxLabel.style.width = "25%";
+  ymaxWrapper.appendChild(ymaxLabel);
+
+  const ymaxValue = document.createElement("input");
+  ymaxValue.id = "ymaxValue";
+  ymaxValue.type = "range";
+  ymaxValue.min = 1.0;
+  ymaxValue.max = 100.0;
+  ymaxValue.step = 1.0;
+  ymaxValue.value = 10.0;
+  ymaxValue.style.width = "25%";
+  ymaxValue.oninput = (event) => {
+    ymaxLabel.innerText = "ymax (" + event.target.value + ")";
+    CHART_BTT.options.scales.y.max = parseFloat(event.target.value);
+  };
+  ymaxWrapper.appendChild(ymaxValue);
+  metricsWrapper.appendChild(ymaxWrapper);
+
   plottingWrapper.appendChild(metricsWrapper);
 
   const canvasBtt = document.createElement("canvas");
@@ -420,6 +445,7 @@ function addPlottingSection() {
           type: "linear",
           position: "left",
           min: 0,
+          max: parseInt(ymaxValue.value),
           ticks: {
             beginAtZero: true,
           },
@@ -462,29 +488,37 @@ function processAmplitudeSpectrum(chunk) {
   PULSE *= PULSE_DECAY;
   let amplitudeSpectrum = [];
 
+  // compute the max value of the DFT
+  const max = Math.max(...chunk);
+  // threshold the amplitude spectrum
   chunk.forEach((value, index) => {
-    if (Math.log10(value) >= NOISE_GATE_THRESHOLD && index <= FILTER_FLUX) {
+    if (
+      (Math.log10(value / max) > NOISE_GATE_THRESHOLD) &&
+      (index < FILTER_FLUX)
+    ) {
+      // amplitudeSpectrum.push(value / (2 * index + 1));
+      // amplitudeSpectrum.push(Math.sqrt(value));
       amplitudeSpectrum.push(value);
+    } else {
+      amplitudeSpectrum.push(0);
     }
   });
 
-  // compute the max value of the DFT
-  const max = Math.max(...chunk);
-
-  amplitudeSpectrum.forEach((element) => {
-    element = element / max;
-  });
+  console.log(amplitudeSpectrum);
+  // amplitudeSpectrum.forEach((element) => {
+  //   element = element / max;
+  // });
   const dftMax = Math.max(...amplitudeSpectrum);
 
   // onset threshold = 0.1 (std above mean + offset)
   const mean = chunk.reduce((a, b) => a + b, 0) / chunk.length;
   const variance =
-    chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / chunk.length;
+    chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / chunk.length;;
   const stdDev = Math.sqrt(variance);
   const stdDevAboveMean = mean + STD_FACTOR * stdDev + STD_OFFSET;
 
   if (dftMax > stdDevAboveMean) {
-    if (MAX_IS_OVER_STD === false && PULSE < 0.1) {
+    if (MAX_IS_OVER_STD === false && PULSE < 0.01) {
       onPulseComputeBpm();
     }
     MAX_IS_OVER_STD = true;
@@ -514,7 +548,7 @@ function addToChartBtt(res) {
   CHART_BTT.data.datasets[2].data.push(res.stdDevAboveMean);
   CHART_BTT.data.datasets[3].data.push(PULSE);
   CHART_BTT.data.datasets[4].data.push(PULSE_GENERATOR.pulse);
-  if (CHART_BTT.data.labels.length > 100) {
+  if (CHART_BTT.data.labels.length > MAX_MEMORY_GRAPH_SIZE) {
     CHART_BTT.data.labels.shift();
     CHART_BTT.data.datasets[0].data.shift();
     CHART_BTT.data.datasets[1].data.shift();

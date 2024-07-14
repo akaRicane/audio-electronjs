@@ -86,6 +86,12 @@ function buildUI() {
   audioNodesWrapper.appendChild(audioNodesLabel);
   app.appendChild(audioNodesWrapper);
 
+  const bpmGeneratorWrapper = document.createElement("div");
+  bpmGeneratorWrapper.id = "bpmGeneratorWrapper";
+  bpmGeneratorWrapper.style.display = "flex";
+  bpmGeneratorWrapper.style.flexDirection = "column";
+  app.appendChild(bpmGeneratorWrapper);
+
   const footerSection = document.createElement("div");
   footerSection.id = "footerSection";
   footerSection.style.display = "flex";

@@ -7,9 +7,178 @@ let MEANS = [];
 let THRESHED = [];
 let MAX_IS_OVER_STD = false;
 let PULSE = 0.0;
-let PULSE_DECAY = 0.8;
-let STD_FACTOR = 0.5;
-let STD_OFFSET = 1.0;
+let PULSE_DECAY = 0.5;
+let STD_FACTOR = 2.0;
+let STD_OFFSET = 2.0;
+let NOISE_GATE_THRESHOLD = -40;
+let FILTER_FLUX = 5;
+let MEYDA_BUFFER_SIZE = 512;
+
+class PulseGenerator {
+  constructor() {
+    this.pulse = 0.0;
+    this.activeBpm = 120.0;
+    this.decay = 0.5;
+    this.waitForSync = false;
+    this.expectedFramesBetweenPulses = 0;
+    this.framesSinceLastPulse = 0;
+    this.taptempoBuffer = [];
+    this.autotempo = false;
+    this.updateActiveBpm(this.activeBpm);
+    this.pulseGenerator();
+  }
+
+  buildUI() {
+    const wrapper = document.getElementById("bpmGeneratorWrapper");
+    console.log(document.getElementById("bpmGeneratorWrapper"));
+
+    const title = document.createElement("label");
+    title.innerText = "Pulse Generator";
+    title.style.fontWeight = "bold";
+    title.style.marginTop = "20px";
+    wrapper.appendChild(title);
+
+    const activeBpmWrapper = document.createElement("div");
+    activeBpmWrapper.style.display = "flex";
+    activeBpmWrapper.style.flexDirection = "row";
+    activeBpmWrapper.style.marginTop = "10px";
+
+    const activeBpmLabel = document.createElement("label");
+    activeBpmLabel.innerText = "Active BPM";
+    activeBpmLabel.style.width = "25%";
+    activeBpmWrapper.appendChild(activeBpmLabel);
+
+    const activeBpmValue = document.createElement("label");
+    activeBpmValue.id = "activeBpmValue";
+    activeBpmValue.innerText = this.activeBpm;
+    activeBpmValue.style.width = "25%";
+    activeBpmWrapper.appendChild(activeBpmValue);
+
+    wrapper.appendChild(activeBpmWrapper);
+
+    const queryManualBpmWrapper = document.createElement("div");
+    queryManualBpmWrapper.style.display = "flex";
+    queryManualBpmWrapper.style.flexDirection = "row";
+    queryManualBpmWrapper.style.marginTop = "10px";
+
+    const queryManualBpmLabel = document.createElement("label");
+    queryManualBpmLabel.innerText = "Manual BPM";
+    queryManualBpmLabel.style.width = "25%";
+    queryManualBpmWrapper.appendChild(queryManualBpmLabel);
+
+    const taptempoButton = document.createElement("button");
+    taptempoButton.innerText = "Tap Tempo";
+    taptempoButton.onclick = () => {
+      this.taptempo();
+    };
+    queryManualBpmWrapper.appendChild(taptempoButton);
+
+    const autotempoButton = document.createElement("button");
+    autotempoButton.innerText = "Auto Tempo";
+    autotempoButton.onclick = () => {
+      this.autotempo = !this.autotempo;
+      if (this.autotempo) {
+        autotempoButton.style.backgroundColor = "green";
+      } else {
+        autotempoButton.style.backgroundColor = "transparent";
+      }
+    };
+    queryManualBpmWrapper.appendChild(autotempoButton);
+
+    const queryManualBpmValue = document.createElement("input");
+    queryManualBpmValue.id = "queryManualBpmValue";
+    queryManualBpmValue.type = "number";
+    queryManualBpmValue.min = 0.0;
+    queryManualBpmValue.max = 200.0;
+    queryManualBpmValue.step = 1.0;
+    queryManualBpmValue.value = 120.0;
+    queryManualBpmWrapper.appendChild(queryManualBpmValue);
+
+    const queryManualBpmButton = document.createElement("button");
+    queryManualBpmButton.innerText = "Set Manual BPM";
+    queryManualBpmButton.onclick = () => {
+      this.updateActiveBpm(parseFloat(queryManualBpmValue.value));
+    };
+    queryManualBpmWrapper.appendChild(queryManualBpmButton);
+
+    const syncManualBpmButton = document.createElement("button");
+    syncManualBpmButton.innerText = "Sync Manual BPM";
+    syncManualBpmButton.style.width = "25%";
+    syncManualBpmButton.onclick = () => {
+      this.waitForSync = true;
+    };
+    queryManualBpmWrapper.appendChild(syncManualBpmButton);
+
+    wrapper.appendChild(queryManualBpmWrapper);
+  }
+
+  updateActiveBpm(bpm) {
+    this.activeBpm = bpm;
+    // Calculate beats per second
+    const bps = bpm / 60.0;
+    // Calculate Meyda framerate (how often Meyda calculates the audio feature per second)
+    const meydaFramerate = AUDIO_SAMPLE_RATE / MEYDA_BUFFER_SIZE; // e.g., 44100 / 512
+    // Adjust expected frames between pulses for Meyda framerate
+    this.expectedFramesBetweenPulses = meydaFramerate / bps;
+    console.log(
+      "expectedFramesBetweenPulses: " + this.expectedFramesBetweenPulses
+    );
+    const label = document.getElementById("activeBpmValue");
+    label ? (label.innerText = bpm) : null;
+  }
+
+  taptempo() {
+    const now = new Date().getTime();
+    this.taptempoBuffer.forEach((element, index) => {
+      if (now - element > 5000) {
+        this.taptempoBuffer.splice(index, 1);
+      }
+    });
+    this.taptempoBuffer.push(now);
+    const timeDiffs = [];
+    this.taptempoBuffer.forEach((element, index) => {
+      if (index > 0) {
+        timeDiffs.push(element - this.taptempoBuffer[index - 1]);
+      }
+    });
+    if (timeDiffs.length > 2) {
+      const avg = timeDiffs.reduce((a, b) => a + b, 0) / timeDiffs.length;
+      const bpm = Math.floor(60000 / avg);
+      const input = document.getElementById("queryManualBpmValue");
+      input ? (input.value = bpm) : null;
+    }
+  }
+
+  pulseFromExternal() {
+    console.log("pulseFromExternal")
+    if (this.autotempo) {
+      this.autotempoFinder();
+    }
+    if (this.waitForSync) {
+    this.waitForSync = false;
+    }
+  }
+
+  autotempoFinder() {
+
+  }
+
+  pulseGenerator() {
+    if (this.waitForSync) {
+      this.pulse = 0.0;
+      return;
+    }
+    if (this.framesSinceLastPulse >= this.expectedFramesBetweenPulses) {
+      this.pulse = 1.0;
+      this.framesSinceLastPulse = 0;
+    } else {
+      this.pulse *= this.decay;
+      this.framesSinceLastPulse += 1;
+    }
+  }
+}
+
+let PULSE_GENERATOR = new PulseGenerator();
 
 function addPlottingSection() {
   const plottingWrapper = document.createElement("div");
@@ -47,7 +216,7 @@ function addPlottingSection() {
   pulseWrapper.id = "pulseWrapper";
   pulseWrapper.style.display = "flex";
   pulseWrapper.style.flexDirection = "row";
-  
+
   const pulseLabel = document.createElement("label");
   pulseLabel.id = "pulseLabel";
   pulseLabel.innerText = "pulse";
@@ -59,6 +228,58 @@ function addPlottingSection() {
   pulseValue.innerText = "0";
   pulseWrapper.appendChild(pulseValue);
   metricsWrapper.appendChild(pulseWrapper);
+
+  const noisereducerWrapper = document.createElement("div");
+  noisereducerWrapper.id = "noisereducerWrapper";
+  noisereducerWrapper.style.display = "flex";
+  noisereducerWrapper.style.flexDirection = "row";
+
+  const noisereducerLabel = document.createElement("label");
+  noisereducerLabel.id = "noisereducerLabel";
+  noisereducerLabel.innerText = "noisereducer";
+  noisereducerLabel.style.width = "25%";
+  noisereducerWrapper.appendChild(noisereducerLabel);
+
+  const noisereducerValue = document.createElement("input");
+  noisereducerValue.id = "noisereducerValue";
+  noisereducerValue.type = "range";
+  noisereducerValue.min = -100;
+  noisereducerValue.max = 0.0;
+  noisereducerValue.step = 1;
+  noisereducerValue.value = NOISE_GATE_THRESHOLD;
+  noisereducerValue.style.width = "25%";
+  noisereducerValue.oninput = (event) => {
+    noisereducerLabel.innerText = "noisereducer (" + event.target.value + ")";
+    NOISE_GATE_THRESHOLD = parseFloat(event.target.value);
+  };
+  noisereducerWrapper.appendChild(noisereducerValue);
+  metricsWrapper.appendChild(noisereducerWrapper);
+
+  const filterFluxWrapper = document.createElement("div");
+  filterFluxWrapper.id = "filterFluxWrapper";
+  filterFluxWrapper.style.display = "flex";
+  filterFluxWrapper.style.flexDirection = "row";
+
+  const filterFluxLabel = document.createElement("label");
+  filterFluxLabel.id = "filterFluxLabel";
+  filterFluxLabel.innerText = "filterFlux";
+  filterFluxLabel.style.width = "25%";
+  filterFluxWrapper.appendChild(filterFluxLabel);
+
+  const filterFluxValue = document.createElement("input");
+  filterFluxValue.id = "filterFluxValue";
+  filterFluxValue.type = "range";
+  filterFluxValue.min = 0.0;
+  filterFluxValue.max = 200;
+  filterFluxValue.step = 1;
+  filterFluxValue.value = FILTER_FLUX;
+  filterFluxValue.style.width = "25%";
+  filterFluxValue.oninput = (event) => {
+    filterFluxLabel.innerText = "filterFlux (" + event.target.value + ")";
+    FILTER_FLUX = parseFloat(event.target.value);
+  };
+  filterFluxWrapper.appendChild(filterFluxValue);
+  metricsWrapper.appendChild(filterFluxWrapper);
 
   const decayWrapper = document.createElement("div");
   decayWrapper.id = "decayWrapper";
@@ -114,7 +335,7 @@ function addPlottingSection() {
   stdOffsetWrapper.id = "stdOffsetWrapper";
   stdOffsetWrapper.style.display = "flex";
   stdOffsetWrapper.style.flexDirection = "row";
-  
+
   const stdOffsetLabel = document.createElement("label");
   stdOffsetLabel.id = "stdOffsetLabel";
   stdOffsetLabel.innerText = "std offset";
@@ -157,24 +378,33 @@ function addPlottingSection() {
         {
           label: "real time dft max",
           data: [],
+          opacity: 0.2,
           fill: false,
         },
         {
           label: "mean",
           data: [],
+          opacity: 0.5,
           fill: false,
         },
         {
           label: "std",
           data: [],
+          opacity: 0.3,
           fill: false,
         },
         {
           label: "pulse",
           data: [],
+          opacity: 1.0,
           fill: false,
         },
-      
+        {
+          label: "BPM Pulse",
+          data: [],
+          opacity: 1.0,
+          fill: false,
+        },
       ],
     },
     options: {
@@ -190,7 +420,6 @@ function addPlottingSection() {
           type: "linear",
           position: "left",
           min: 0,
-          max: 50,
           ticks: {
             beginAtZero: true,
           },
@@ -210,13 +439,13 @@ function onMetrics(features) {
     const metricValue = document.getElementById(metric + "Value");
     if (metric === "amplitudeSpectrum") {
       const res = processAmplitudeSpectrum(features[metric]);
-      
+
       metricLabel.innerText = "amplitudeSpectrum (max)";
       metricValue.innerText = res.dftMax;
-      
+
       document.getElementById("pulseValue").innerText = PULSE.toFixed(2);
       document.getElementById("pulseValue").style.opacity = PULSE.toFixed(2);
-    
+
       addToChartBtt(res);
     } else if (
       typeof features[metric] === "object" ||
@@ -230,40 +459,39 @@ function onMetrics(features) {
 }
 
 function processAmplitudeSpectrum(chunk) {
+  PULSE *= PULSE_DECAY;
+  let amplitudeSpectrum = [];
 
-  // spectral flux = windowed DFT of signal
-  const amplitudeSpectrum = chunk.map((value) => value);
-  // noise gate = truncate values below threshold -> skipped
-  // windowed signal normalization -> skipped
-  // compression gamma -> skipped
+  chunk.forEach((value, index) => {
+    if (Math.log10(value) >= NOISE_GATE_THRESHOLD && index <= FILTER_FLUX) {
+      amplitudeSpectrum.push(value);
+    }
+  });
 
   // compute the max value of the DFT
-  const dftMax = Math.max(...amplitudeSpectrum);
-  // const dftMax = Math.log10(Math.max(...amplitudeSpectrum));
+  const max = Math.max(...chunk);
 
-  // filter cut off (low pass) fc = 10 Hz (order 15 ?)
-  // var fft = new FFT(1024, AUDIO_SAMPLE_RATE);
-  // fft.forward(amplitudeSpectrum);
-  // var spectrum = fft.spectrum;
-  // var lpfilter = IIRFilter(LOWPASS, 15, AUDIO_SAMPLE_RATE);
-  // lpfilter.process(spectrum);
+  amplitudeSpectrum.forEach((element) => {
+    element = element / max;
+  });
+  const dftMax = Math.max(...amplitudeSpectrum);
 
   // onset threshold = 0.1 (std above mean + offset)
-  const mean = amplitudeSpectrum.reduce((a, b) => a + b, 0) / amplitudeSpectrum.length;
-  const variance = amplitudeSpectrum.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / amplitudeSpectrum.length;
+  const mean = chunk.reduce((a, b) => a + b, 0) / chunk.length;
+  const variance =
+    chunk.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / chunk.length;
   const stdDev = Math.sqrt(variance);
   const stdDevAboveMean = mean + STD_FACTOR * stdDev + STD_OFFSET;
 
   if (dftMax > stdDevAboveMean) {
-    if (MAX_IS_OVER_STD === false) {
-      console.log("pulse detected!");
-      PULSE = 1.0;
+    if (MAX_IS_OVER_STD === false && PULSE < 0.1) {
+      onPulseComputeBpm();
     }
     MAX_IS_OVER_STD = true;
   } else {
     MAX_IS_OVER_STD = false;
   }
-  PULSE *= PULSE_DECAY;
+  PULSE < 0.01 ? (PULSE = 0) : null;
 
   return {
     amplitudeSpectrum: amplitudeSpectrum,
@@ -273,18 +501,26 @@ function processAmplitudeSpectrum(chunk) {
   };
 }
 
+function onPulseComputeBpm() {
+  // console.log("pulse detected!");
+  PULSE_GENERATOR.pulseFromExternal();
+  PULSE = 1.0;
+}
+
 function addToChartBtt(res) {
   CHART_BTT.data.labels.push(counter);
   CHART_BTT.data.datasets[0].data.push(res.dftMax);
   CHART_BTT.data.datasets[1].data.push(res.mean);
   CHART_BTT.data.datasets[2].data.push(res.stdDevAboveMean);
   CHART_BTT.data.datasets[3].data.push(PULSE);
-  if (CHART_BTT.data.labels.length > 500) {
+  CHART_BTT.data.datasets[4].data.push(PULSE_GENERATOR.pulse);
+  if (CHART_BTT.data.labels.length > 100) {
     CHART_BTT.data.labels.shift();
     CHART_BTT.data.datasets[0].data.shift();
     CHART_BTT.data.datasets[1].data.shift();
     CHART_BTT.data.datasets[2].data.shift();
     CHART_BTT.data.datasets[3].data.shift();
+    CHART_BTT.data.datasets[4].data.shift();
   }
   counter += 1;
   CHART_BTT.update();
@@ -296,6 +532,8 @@ async function startBttRoutine() {
   await audioCtx.audioWorklet.addModule("../custom/btt.js");
   await audioCtx.audioWorklet.addModule("../custom/muter.js");
   updateSampleRate(audioCtx.sampleRate);
+
+  PULSE_GENERATOR.buildUI();
 
   navigator.mediaDevices
     .getUserMedia(constraints)
@@ -310,16 +548,7 @@ async function startBttRoutine() {
 
       /* create audio nodes */
       audioChain.push(addMediaStreamSourceNode(audioCtx, stream));
-      audioChain.push(
-        addBiquadFilterNode(audioCtx, {
-          type: "bandpass",
-          frequency: 160,
-          q: 60,
-          gain: 20.0,
-        })
-      );
       audioChain.push(addGainNode(audioCtx, 1.0, 100.0));
-      // audioChain.push(addFftNode(audioCtx, fftCallback));
       audioChain.push(addCustomNode(audioCtx, "muter-processor"));
 
       /* connect the nodes */
@@ -334,10 +563,11 @@ async function startBttRoutine() {
       } else {
         const analyzerA = Meyda.createMeydaAnalyzer({
           audioContext: audioCtx,
-          source: audioChain[2],
-          bufferSize: 1024,
+          source: audioChain[1],
+          bufferSize: MEYDA_BUFFER_SIZE,
           featureExtractors: METRICS,
           callback: (features) => {
+            PULSE_GENERATOR.pulseGenerator();
             onMetrics(features);
           },
         });
